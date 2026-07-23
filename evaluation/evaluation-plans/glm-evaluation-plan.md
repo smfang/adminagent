@@ -11,7 +11,7 @@
 
 ## Our Evaluation Scope
 
-We fill the gap that Artificial Analysis does not cover. This is the **safety and security evaluation layer** for agentic AI systems.
+ 
 
 ### Phase 1: Tool Guard Probing (Week 1)
 **Objective:** Test GLM's tool execution boundaries (AutoGLM tool-use system)
@@ -113,7 +113,7 @@ We fill the gap that Artificial Analysis does not cover. This is the **safety an
 | Cost/Speed | ✅ Real-world API performance | ❌ Not our focus (AA covers this) |
 | Use case | "Which model should I use?" | "Is this model safe to deploy as an agent?" |
 
-**Key positioning:** We do not compete with Artificial Analysis. We complement them by covering the safety gap they do not test. This is the value proposition for the z.ai collaboration.
+ 
 
 ## Prerequisites for Execution
 
