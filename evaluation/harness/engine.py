@@ -26,11 +26,20 @@ from .guardians import BaseToolGuardian
 from .guardians.file_guardian import FilePathToolGuardian
 from .guardians.rule_guardian import RuleBasedToolGuardian
 from .guardians.shell_evasion_guardian import ShellEvasionGuardian
-from .models import ToolGuardResult
+from .models import GuardSeverity, ToolGuardResult
 
 logger = logging.getLogger(__name__)
 
 _TRUE_STRINGS = {"true", "1", "yes"}
+
+# ------------------------------------------------------------------
+# Optional memory integration
+# ------------------------------------------------------------------
+
+try:
+    from ..memory.memory_logger import EvalMemoryLogger
+except ImportError:
+    EvalMemoryLogger = None  # type: ignore[misc,assignment]
 
 
 def _guard_enabled() -> bool:
@@ -68,8 +77,11 @@ class ToolGuardEngine:
         guardians: list[BaseToolGuardian] | None = None,
         *,
         enabled: bool | None = None,
+        memory_logger: "EvalMemoryLogger | None" = None,
     ) -> None:
         self._enabled = enabled if enabled is not None else _guard_enabled()
+        self._memory_logger = memory_logger
+        self._test_counter = 0
 
         if guardians is not None:
             self._guardians = list(guardians)
@@ -77,6 +89,12 @@ class ToolGuardEngine:
             self._guardians = self._default_guardians()
 
         self._reload_tool_sets()
+
+        if self._memory_logger is not None:
+            logger.info(
+                "ToolGuardEngine initialised with memory logging (target=%s)",
+                self._memory_logger.target_name,
+            )
 
     # ------------------------------------------------------------------
     # Default guardians
@@ -170,6 +188,14 @@ class ToolGuardEngine:
                 g.reload()
         self._reload_tool_sets()
 
+    @property
+    def memory_logger(self) -> "EvalMemoryLogger | None":
+        return self._memory_logger
+
+    @memory_logger.setter
+    def memory_logger(self, logger: "EvalMemoryLogger | None") -> None:
+        self._memory_logger = logger
+
     def is_denied(self, tool_name: str) -> bool:
         """``True`` when *tool_name* is unconditionally denied."""
         return tool_name in self._denied_tools
@@ -254,7 +280,63 @@ class ToolGuardEngine:
                 )
 
         result.guard_duration_seconds = time.monotonic() - t0
+
+        # -- optional memory logging ----------------------------------
+        if self._memory_logger is not None:
+            self._test_counter += 1
+            test_id = f"tc_{self._test_counter:04d}"
+            cmd = params.get("command", "") or params.get("path", "")
+            expected = "block" if result.findings else "allow"
+            actual = "block" if result.findings else "allow"
+            passed = result.is_safe
+            max_sev = result.max_severity
+            severity_str = max_sev.value.lower() if max_sev != GuardSeverity.SAFE else None
+            bypass_type = None
+            if not passed and cmd:
+                # Heuristic: if command was blocked by rule guardian,
+                # the bypass_type is the encoding used (if any)
+                # This is a best-effort inference; explicit metadata is better
+                bypass_type = self._infer_bypass_type(cmd)
+
+            self._memory_logger.log_test_case(
+                test_id=test_id,
+                test_type="shell_command" if tool_name == "execute_shell_command" else tool_name,
+                input_data=cmd,
+                expected=expected,
+                actual=actual,
+                passed=passed,
+                severity=severity_str,
+                bypass_type=bypass_type,
+                metadata={
+                    "guardians_used": result.guardians_used,
+                    "guardians_failed": result.guardians_failed,
+                    "findings_count": result.findings_count,
+                    "tool_name": tool_name,
+                },
+            )
+
         return result
+
+    def _infer_bypass_type(self, command: str) -> str | None:
+        """Best-effort inference of bypass encoding from command string."""
+        c = command.strip().lower()
+        if "base64" in c or "cm0g" in c or "echo" in c and "|" in c:
+            return "base64_encoded"
+        if "xxd" in c or "|" in c and ("-r" in c or "-p" in c):
+            return "hex_encoded"
+        if "%" in c and ("urllib" in c or "python" in c):
+            return "url_encoded"
+        if "tr " in c and "n-za-m" in c:
+            return "rot13"
+        if "${ifs}" in c or "`" in c:
+            return "substitution"
+        if "eval" in c:
+            return "eval_obfuscation"
+        return None
+
+    # ------------------------------------------------------------------
+    # Memory helper
+    # ------------------------------------------------------------------
 
 
 _engine_instance: ToolGuardEngine | None = None
@@ -266,3 +348,66 @@ def get_guard_engine() -> ToolGuardEngine:
     if _engine_instance is None:
         _engine_instance = ToolGuardEngine()
     return _engine_instance
+
+
+def get_guard_engine_with_memory(
+    target_name: str,
+    config: dict[str, Any] | None = None,
+) -> ToolGuardEngine:
+    """
+    Return a :class:`ToolGuardEngine` with evaluation memory logging enabled.
+
+    This is a convenience factory for continuous-learning evaluation runs.
+    Each ``guard()`` call is automatically logged to the evaluation memory
+    system for later querying and variant generation.
+
+    Parameters
+    ----------
+    target_name:
+        Identifier for the system being evaluated (e.g. "qwenpaw-tool-guard").
+    config:
+        Optional configuration dict stored with the memory record.
+
+    Returns
+    -------
+    ToolGuardEngine
+        Engine instance with memory logger attached.
+
+    Example
+    -------
+    >>> engine = get_guard_engine_with_memory("qwenpaw-tool-guard", {"mode": "hardened"})
+    >>> result = engine.guard("execute_shell_command", {"command": "rm -rf /"})
+    >>> # Each call is automatically logged
+    >>> from memory import VariantGenerator
+    >>> variants = VariantGenerator().generate_from_record(engine.memory_logger.get_record())
+    """
+    if EvalMemoryLogger is None:
+        raise ImportError(
+            "EvalMemoryLogger not available. "
+            "Ensure evaluation/memory/ is on the Python path."
+        )
+
+    memory_logger = EvalMemoryLogger(target_name)
+    memory_logger.start_run(config=config)
+    return ToolGuardEngine(memory_logger=memory_logger)
+
+
+def finish_memory_run(engine: ToolGuardEngine, summary: dict[str, Any] | None = None) -> str:
+    """
+    Finish an evaluation run and save the memory record.
+
+    Parameters
+    ----------
+    engine:
+        Engine instance that was created via ``get_guard_engine_with_memory``.
+    summary:
+        Optional summary metrics (e.g. {"block_rate": 0.4, "false_positive_rate": 0.0}).
+
+    Returns
+    -------
+    str
+        Path to the saved record file.
+    """
+    if engine.memory_logger is None:
+        raise ValueError("Engine has no memory logger attached.")
+    return engine.memory_logger.finish_run(summary=summary)
