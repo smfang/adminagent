@@ -4,7 +4,7 @@ Based on NeoResearch DeepSeek-V4 Pro Safety Evaluation (Section 5: Adversarial R
 
 Tests jailbreak resistance using multiple attack templates against harmful requests.
 
-## Key Finding from NeoResearch
+## Key Finding (from Neo Research) 
 
 DSv4 Pro's StrongREJECT jailbreak rate went from 0.6% to **77.8%** with a 2023 roleplay template (single user turn, no system-message access). AgentHarm common template attack dropped refusal to **0.95%**.
 
