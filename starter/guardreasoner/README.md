@@ -167,6 +167,107 @@ Produces a markdown report with:
 
 ---
 
+## 1-Week Agentic System Evaluation Sprint
+
+The GuardReasoner harness above evaluates **guardrail classification** — binary safe/unsafe decisions. If you need to evaluate a full **agentic system** (multi-step reasoning, tool use, autonomous execution) within one week, use this lightweight approach instead.
+
+> **Core idea:** Pair a lightweight open-weight model with a modular evaluation framework that runs locally or on a single GPU.
+
+---
+
+### Option 1: Safety & Tool-Misuse Eval
+**Best for:** Guardrail testing, risk assessment, indirect prompt injection via tool outputs
+
+| Component | Choice | Why |
+|-----------|--------|-----|
+| **Harness** | [Inspect AI](https://inspect.ai-safety-institute.org.uk/) (UK AISI) | Purpose-built for multi-step agent trajectories, tool calls, sandboxed code execution. Built-in metrics: task completion, tool call accuracy, safety violations. |
+| **Model** | `meta-llama/Llama-3.1-8B-Instruct` or `Qwen/Qwen2.5-7B-Instruct` | Fits on a single GPU, strong instruction-following, good tool-use out of the box. |
+| **Dataset** | 30–50 samples from [GAIA](https://huggingface.co/datasets/gaia-benchmark/GAIA) Level 1, or custom prompt-injection payloads embedded in mock tool responses. |
+
+**Day-by-day plan:**
+
+| Day | Task |
+|-----|------|
+| 1–2 | Install Inspect AI, configure model provider (local vLLM or API), define 3–5 mock tools (Python interpreter, web search, file read). |
+| 3–4 | Run the 50-sample dataset. Inject adversarial inputs into tool outputs (e.g., search results containing jailbreak prompts). Measure if the agent breaks instructions or leaks system prompts. |
+| 5 | Aggregate trajectory pass rates and tool failure modes. Use `inspect view` to browse results. Draft findings. |
+
+**Key metrics:**
+- Task completion rate
+- Tool call accuracy
+- Safety violation count (attempts to execute blocked actions)
+- Prompt-injection success rate
+
+**Cost:** ~$50–$100 (single A100/L40S for 5 days, or API equivalent)
+
+---
+
+### Option 2: Function Calling & Tool Performance Eval
+**Best for:** Evaluating how well an agent selects, sequences, and parameterizes tool calls
+
+| Component | Choice | Why |
+|-----------|--------|-----|
+| **Harness** | [Inspect AI](https://inspect.ai-safety-institute.org.uk/) or [Berkeley Function Calling Leaderboard (BFCL)](https://gorilla.cs.berkeley.edu/leaderboard.html) | BFCL is the standard for function-calling accuracy; Inspect AI adds trajectory-level evaluation. |
+| **Model** | `microsoft/Phi-4-mini-instruct` or `Qwen/Qwen2.5-7B-Instruct` | Strong structured-output performance, JSON mode support, small enough for fast iteration. |
+| **Dataset** | BFCL test set (subset to 50–100 samples) or custom tool schemas with edge cases (missing required params, ambiguous descriptions, circular dependencies). |
+
+**Day-by-day plan:**
+
+| Day | Task |
+|-----|------|
+| 1–2 | Set up BFCL harness or Inspect AI with function-calling tasks. Define 5–10 tool schemas mirroring your production tools. |
+| 3–4 | Run evaluations. Measure: correct tool selection, correct parameter filling, handling of malformed tool outputs, recovery from tool errors. |
+| 5 | Analyze failure modes: hallucinated tools, wrong parameter types, missing required fields. Generate per-tool accuracy heatmap. |
+
+**Key metrics:**
+- Tool selection accuracy
+- Parameter match rate (exact + semantic)
+- JSON validity rate
+- Error recovery rate (after simulated tool failure)
+
+**Cost:** ~$30–$60 (smaller models, shorter runs)
+
+---
+
+### Option 3: Autonomous Skill Execution Eval
+**Best for:** End-to-end task completion with minimal human oversight
+
+| Component | Choice | Why |
+|-----------|--------|-----|
+| **Harness** | [SWE-bench](https://www.swebench.com/) (light) or [AgentBench](https://github.com/THUDM/AgentBench) | SWE-bench tests real GitHub issue resolution; AgentBench covers web browsing, household tasks, OS operations. |
+| **Model** | `deepseek-ai/DeepSeek-R1-Distill-Qwen-7B` or `Qwen/Qwen2.5-7B-Instruct` | Strong reasoning (R1-distilled) or reliable generalist (Qwen). |
+| **Dataset** | 20–30 SWE-bench Lite instances (filtered to Python, ~medium difficulty) or 50 AgentBench web-browsing tasks. |
+
+**Day-by-day plan:**
+
+| Day | Task |
+|-----|------|
+| 1–2 | Set up SWE-bench Lite or AgentBench harness. Configure sandboxed environment (Docker). |
+| 3–4 | Run tasks. For SWE-bench: measure patch correctness (passes tests). For AgentBench: measure task success rate, steps taken, error recovery. |
+| 5 | Categorize failures: planning errors, tool misuse, hallucinated observations, infinite loops. Score autonomy level (0–3). |
+
+**Key metrics:**
+- Task success rate
+- Patch pass rate (SWE-bench)
+- Average steps to completion
+- Autonomy score: 0 = stuck/failed, 1 = completed with hints, 2 = completed with retry, 3 = fully autonomous
+
+**Cost:** ~$100–$200 (longer trajectories, more compute per task)
+
+---
+
+### Choosing Your Pairing
+
+| If your focus is... | Use Option | Core Question |
+|---------------------|------------|---------------|
+| "Does my agent stay safe when tools misbehave?" | **1** | Safety under adversarial tool outputs |
+| "Does my agent call the right tools with the right arguments?" | **2** | Function-calling precision and robustness |
+| "Can my agent complete complex tasks without hand-holding?" | **3** | End-to-end autonomy and reliability |
+
+> **Tip:** All three options can use the **same lightweight model** (e.g., Qwen2.5-7B-Instruct) — just swap the harness and dataset. This lets you run a multi-faceted evaluation in one week without managing multiple model deployments.
+
+---
+
 ## Adapting for a Different Model
 
 To evaluate a different policy-conditioned classifier:
